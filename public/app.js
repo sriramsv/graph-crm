@@ -7,6 +7,7 @@ const state = {
   meContactId: null,
   localGraphRootId: null,
   allRelationships: [],
+  spouseMap: new Map(),
 }
 
 // -- Theme --
@@ -32,20 +33,12 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
 initTheme()
 
 async function api(path, options) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (res.status === 401) {
-    window.location.href = '/login.html'
-    throw new Error('not authenticated')
+  try {
+    return await apiRequest(path, options)
+  } catch (err) {
+    if (err.status === 401) window.location.href = '/login.html'
+    throw err
   }
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `Request failed: ${res.status}`)
-  }
-  if (res.status === 204) return null
-  return res.json()
 }
 
 // -- Tabs --
@@ -82,7 +75,7 @@ function computeSpouseMap() {
 }
 
 document.getElementById('export-directory-btn').addEventListener('click', () => {
-  const spouseMap = computeSpouseMap()
+  const spouseMap = state.spouseMap
   const headers = ['name', 'email', 'phone', 'company', 'title', 'date_of_birth', 'address', 'spouse']
   const lines = [headers.join(',')]
   for (const c of allContactsFull) {
@@ -192,13 +185,12 @@ async function showContactDetail(id) {
   const panel = document.getElementById('detail-panel')
   const content = document.getElementById('detail-content')
   const isMeView = id === state.meContactId
-  const [interactions, allRelationships, pathResult] = await Promise.all([
+  const [interactions, pathResult] = await Promise.all([
     api(`/api/contacts/${id}/interactions`),
-    api('/api/relationships'),
     isMeView ? Promise.resolve({ path: null }) : api(`/api/contacts/${id}/path-to-me`),
   ])
   const relatedContactsById = new Map(state.contacts.map((c) => [c.id, c]))
-  const relationships = allRelationships.filter((r) => r.source_id === id || r.target_id === id)
+  const relationships = state.allRelationships.filter((r) => r.source_id === id || r.target_id === id)
   const CLOSE_FAMILY_TYPES = new Set(['spouse', 'parent_of', 'child_of', 'sibling', 'family'])
   const shownRelationships = isMeView ? relationships.filter((r) => CLOSE_FAMILY_TYPES.has(r.type)) : relationships
   const hiddenCount = relationships.length - shownRelationships.length
@@ -363,11 +355,12 @@ let allContactsFull = []
 
 async function loadContactsTable() {
   allContactsFull = await api('/api/contacts')
+  state.spouseMap = computeSpouseMap()
   renderContactsTable(allContactsFull)
 }
 
 function renderContactsTable(contacts) {
-  const spouseMap = computeSpouseMap()
+  const spouseMap = state.spouseMap
   const tbody = document.querySelector('#contacts-table tbody')
   tbody.innerHTML = ''
   contacts.forEach((c) => {
@@ -936,9 +929,8 @@ function setupMePicker() {
 const editRelCombobox = setupCombobox(document.getElementById('edit-rel-combobox'))
 
 async function loadEditRelationships(contactId) {
-  const [allRelationships] = await Promise.all([api('/api/relationships')])
   const relatedContactsById = new Map(state.contacts.map((c) => [c.id, c]))
-  const relationships = allRelationships.filter(
+  const relationships = state.allRelationships.filter(
     (r) => r.source_id === contactId || r.target_id === contactId
   )
 

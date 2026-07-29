@@ -22,14 +22,6 @@ function getApiKey() {
 
 const server = new McpServer({ name: 'graph-crm', version: '1.0.0' })
 
-function json(data) {
-  return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] }
-}
-
-function errorResult(message) {
-  return { content: [{ type: 'text', text: message }], isError: true }
-}
-
 async function api(path, options) {
   const apiKey = getApiKey()
   let res
@@ -50,9 +42,23 @@ async function api(path, options) {
   return body
 }
 
+// Registers a tool whose handler just returns data (or throws). Success is wrapped as
+// MCP JSON content automatically; thrown errors become an MCP error result automatically —
+// no per-tool try/catch/json() boilerplate needed.
+function tool(name, config, handler) {
+  server.registerTool(name, config, async (args) => {
+    try {
+      const result = await handler(args)
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+    } catch (err) {
+      return { content: [{ type: 'text', text: err.message }], isError: true }
+    }
+  })
+}
+
 // -- Contacts --
 
-server.registerTool(
+tool(
   'list_contacts',
   {
     title: 'List contacts',
@@ -62,16 +68,10 @@ server.registerTool(
       'or to get an overview of who is in the CRM. Does not include relationships — use get_contact or list_relationships for those.',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/contacts'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/contacts')
 )
 
-server.registerTool(
+tool(
   'find_duplicate_contacts',
   {
     title: 'Find duplicate contacts',
@@ -81,16 +81,10 @@ server.registerTool(
       'to decide what to merge — it does not change any data.',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/contacts/duplicates'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/contacts/duplicates')
 )
 
-server.registerTool(
+tool(
   'merge_contacts',
   {
     title: 'Merge duplicate contacts',
@@ -102,18 +96,11 @@ server.registerTool(
       'the primary before calling this.',
     inputSchema: { primary_id: z.number(), duplicate_ids: z.array(z.number()).min(1) },
   },
-  async ({ primary_id, duplicate_ids }) => {
-    try {
-      return json(
-        await api('/api/contacts/merge', { method: 'POST', body: JSON.stringify({ primary_id, duplicate_ids }) })
-      )
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ primary_id, duplicate_ids }) =>
+    api('/api/contacts/merge', { method: 'POST', body: JSON.stringify({ primary_id, duplicate_ids }) })
 )
 
-server.registerTool(
+tool(
   'get_contact',
   {
     title: 'Get contact',
@@ -124,21 +111,17 @@ server.registerTool(
     inputSchema: { id: z.number() },
   },
   async ({ id }) => {
-    try {
-      const [contact, allRelationships, interactions] = await Promise.all([
-        api(`/api/contacts/${id}`),
-        api('/api/relationships'),
-        api(`/api/contacts/${id}/interactions`),
-      ])
-      const relationships = allRelationships.filter((r) => r.source_id === id || r.target_id === id)
-      return json({ ...contact, relationships, interactions })
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    const [contact, allRelationships, interactions] = await Promise.all([
+      api(`/api/contacts/${id}`),
+      api('/api/relationships'),
+      api(`/api/contacts/${id}/interactions`),
+    ])
+    const relationships = allRelationships.filter((r) => r.source_id === id || r.target_id === id)
+    return { ...contact, relationships, interactions }
   }
 )
 
-server.registerTool(
+tool(
   'create_contact',
   {
     title: 'Create contact',
@@ -154,16 +137,10 @@ server.registerTool(
       notes: z.string().optional(),
     },
   },
-  async (args) => {
-    try {
-      return json(await api('/api/contacts', { method: 'POST', body: JSON.stringify(args) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  (args) => api('/api/contacts', { method: 'POST', body: JSON.stringify(args) })
 )
 
-server.registerTool(
+tool(
   'update_contact',
   {
     title: 'Update contact',
@@ -181,17 +158,13 @@ server.registerTool(
     },
   },
   async ({ id, ...fields }) => {
-    try {
-      const existing = await api(`/api/contacts/${id}`)
-      const merged = { ...existing, ...fields }
-      return json(await api(`/api/contacts/${id}`, { method: 'PUT', body: JSON.stringify(merged) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    const existing = await api(`/api/contacts/${id}`)
+    const merged = { ...existing, ...fields }
+    return api(`/api/contacts/${id}`, { method: 'PUT', body: JSON.stringify(merged) })
   }
 )
 
-server.registerTool(
+tool(
   'delete_all_contacts',
   {
     title: 'Delete ALL contacts',
@@ -199,16 +172,10 @@ server.registerTool(
       'Permanently delete every contact, relationship, and note in the CRM. Irreversible — requires confirm: true.',
     inputSchema: { confirm: z.literal(true) },
   },
-  async () => {
-    try {
-      return json(await api('/api/contacts?confirm=DELETE_ALL', { method: 'DELETE' }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/contacts?confirm=DELETE_ALL', { method: 'DELETE' })
 )
 
-server.registerTool(
+tool(
   'import_vcard',
   {
     title: 'Import contacts from vCard',
@@ -216,16 +183,10 @@ server.registerTool(
       'Bulk-import contacts from vCard (.vcf) text, as exported by Google Contacts or Apple Contacts. Deduplicates by email and phone.',
     inputSchema: { vcard: z.string().min(1) },
   },
-  async ({ vcard }) => {
-    try {
-      return json(await api('/api/contacts/import', { method: 'POST', body: JSON.stringify({ vcard }) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ vcard }) => api('/api/contacts/import', { method: 'POST', body: JSON.stringify({ vcard }) })
 )
 
-server.registerTool(
+tool(
   'import_relationships_csv',
   {
     title: 'Bulk import relationships from CSV',
@@ -233,16 +194,10 @@ server.registerTool(
       'Bulk-create relationships from CSV text with columns source,target,type,notes. People are matched by exact email or exact name.',
     inputSchema: { csv: z.string().min(1) },
   },
-  async ({ csv }) => {
-    try {
-      return json(await api('/api/relationships/import', { method: 'POST', body: JSON.stringify({ csv }) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ csv }) => api('/api/relationships/import', { method: 'POST', body: JSON.stringify({ csv }) })
 )
 
-server.registerTool(
+tool(
   'get_directory',
   {
     title: 'Get contact directory',
@@ -252,16 +207,10 @@ server.registerTool(
       'full-fields export is what\'s needed.',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/directory'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/directory')
 )
 
-server.registerTool(
+tool(
   'delete_contact',
   {
     title: 'Delete contact',
@@ -269,18 +218,14 @@ server.registerTool(
     inputSchema: { id: z.number() },
   },
   async ({ id }) => {
-    try {
-      await api(`/api/contacts/${id}`, { method: 'DELETE' })
-      return json({ deleted: id })
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    await api(`/api/contacts/${id}`, { method: 'DELETE' })
+    return { deleted: id }
   }
 )
 
 // -- Relationships --
 
-server.registerTool(
+tool(
   'list_relationships',
   {
     title: 'List relationships',
@@ -290,16 +235,10 @@ server.registerTool(
       'get_contact, which already filters this down for you.',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/relationships'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/relationships')
 )
 
-server.registerTool(
+tool(
   'create_relationship',
   {
     title: 'Create relationship',
@@ -312,16 +251,10 @@ server.registerTool(
       notes: z.string().optional(),
     },
   },
-  async (args) => {
-    try {
-      return json(await api('/api/relationships', { method: 'POST', body: JSON.stringify(args) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  (args) => api('/api/relationships', { method: 'POST', body: JSON.stringify(args) })
 )
 
-server.registerTool(
+tool(
   'delete_relationship',
   {
     title: 'Delete relationship',
@@ -329,34 +262,24 @@ server.registerTool(
     inputSchema: { id: z.number() },
   },
   async ({ id }) => {
-    try {
-      await api(`/api/relationships/${id}`, { method: 'DELETE' })
-      return json({ deleted: id })
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    await api(`/api/relationships/${id}`, { method: 'DELETE' })
+    return { deleted: id }
   }
 )
 
 // -- Interactions (notes & conversations) --
 
-server.registerTool(
+tool(
   'list_interactions',
   {
     title: 'List interactions',
     description: 'List notes/conversations logged for a contact, most recent first',
     inputSchema: { contact_id: z.number() },
   },
-  async ({ contact_id }) => {
-    try {
-      return json(await api(`/api/contacts/${contact_id}/interactions`))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ contact_id }) => api(`/api/contacts/${contact_id}/interactions`)
 )
 
-server.registerTool(
+tool(
   'add_interaction',
   {
     title: 'Add interaction',
@@ -368,18 +291,11 @@ server.registerTool(
       occurred_at: z.string().optional().describe('ISO datetime; defaults to now'),
     },
   },
-  async ({ contact_id, ...rest }) => {
-    try {
-      return json(
-        await api(`/api/contacts/${contact_id}/interactions`, { method: 'POST', body: JSON.stringify(rest) })
-      )
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ contact_id, ...rest }) =>
+    api(`/api/contacts/${contact_id}/interactions`, { method: 'POST', body: JSON.stringify(rest) })
 )
 
-server.registerTool(
+tool(
   'delete_interaction',
   {
     title: 'Delete interaction',
@@ -387,34 +303,24 @@ server.registerTool(
     inputSchema: { id: z.number() },
   },
   async ({ id }) => {
-    try {
-      await api(`/api/interactions/${id}`, { method: 'DELETE' })
-      return json({ deleted: id })
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    await api(`/api/interactions/${id}`, { method: 'DELETE' })
+    return { deleted: id }
   }
 )
 
 // -- Graph --
 
-server.registerTool(
+tool(
   'get_graph',
   {
     title: 'Get graph',
     description: 'Get the full graph of people (nodes) and relationships (edges)',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/graph'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/graph')
 )
 
-server.registerTool(
+tool(
   'get_subgraph',
   {
     title: 'Get local subgraph',
@@ -424,16 +330,10 @@ server.registerTool(
       'rendering a focused view; use get_graph instead if you need the whole CRM.',
     inputSchema: { contact_id: z.number(), depth: z.number().min(1).max(4).default(1) },
   },
-  async ({ contact_id, depth }) => {
-    try {
-      return json(await api(`/api/contacts/${contact_id}/subgraph?depth=${depth || 1}`))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ contact_id, depth }) => api(`/api/contacts/${contact_id}/subgraph?depth=${depth || 1}`)
 )
 
-server.registerTool(
+tool(
   'get_relationship_path_to_me',
   {
     title: 'Get relationship path to "me"',
@@ -443,50 +343,32 @@ server.registerTool(
       'it does the graph traversal for you, so prefer it over manually walking list_relationships yourself.',
     inputSchema: { contact_id: z.number() },
   },
-  async ({ contact_id }) => {
-    try {
-      return json(await api(`/api/contacts/${contact_id}/path-to-me`))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ contact_id }) => api(`/api/contacts/${contact_id}/path-to-me`)
 )
 
 // -- "Me" (who are you) --
 
-server.registerTool(
+tool(
   'get_me',
   {
     title: 'Get "me" contact',
     description: 'Get the contact designated as the CRM owner ("me"), if one has been set',
     inputSchema: {},
   },
-  async () => {
-    try {
-      return json(await api('/api/me'))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  () => api('/api/me')
 )
 
-server.registerTool(
+tool(
   'set_me',
   {
     title: 'Set "me" contact',
     description: 'Designate which contact represents the CRM owner ("me")',
     inputSchema: { contact_id: z.number() },
   },
-  async ({ contact_id }) => {
-    try {
-      return json(await api('/api/me', { method: 'PUT', body: JSON.stringify({ contact_id }) }))
-    } catch (err) {
-      return errorResult(err.message)
-    }
-  }
+  ({ contact_id }) => api('/api/me', { method: 'PUT', body: JSON.stringify({ contact_id }) })
 )
 
-server.registerTool(
+tool(
   'clear_me',
   {
     title: 'Clear "me" contact',
@@ -494,12 +376,8 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
-    try {
-      await api('/api/me', { method: 'DELETE' })
-      return json({ cleared: true })
-    } catch (err) {
-      return errorResult(err.message)
-    }
+    await api('/api/me', { method: 'DELETE' })
+    return { cleared: true }
   }
 )
 

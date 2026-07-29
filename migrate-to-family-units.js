@@ -1,12 +1,14 @@
-// One-off migration: read legacy pairwise `relationships` rows and populate
-// FamilyUnit/FamilyUnitMember. Leaves the `relationships` table untouched as a backup.
+// Re-derive FamilyUnit/FamilyUnitMember from the legacy pairwise `relationships` rows.
+// FamilyUnit data is entirely derived (nothing edits it directly), so it's always safe
+// to wipe and rebuild fresh rather than try to incrementally reconcile. Leaves the
+// `relationships` table untouched as the source of truth.
 const prisma = require('./prisma/client')
 
 async function main() {
   const existingUnits = await prisma.familyUnit.count()
   if (existingUnits > 0) {
-    console.log(`family_units already has ${existingUnits} rows — refusing to run twice. Delete them first if you want to re-run.`)
-    process.exit(1)
+    console.log(`Wiping ${existingUnits} existing family_units (and their members) before re-deriving...`)
+    await prisma.familyUnit.deleteMany({})
   }
 
   const allRels = await prisma.relationship.findMany()

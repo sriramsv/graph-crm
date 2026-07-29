@@ -65,7 +65,8 @@ async function verifyApiKey(rawKey) {
   if (!rawKey) return false
   const record = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(rawKey) } })
   if (!record) return false
-  await prisma.apiKey.update({ where: { id: record.id }, data: { lastUsedAt: new Date() } })
+  // Don't block the request on this — it's just bookkeeping for the Settings UI.
+  prisma.apiKey.update({ where: { id: record.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
   return true
 }
 
@@ -202,7 +203,7 @@ async function verifyAuthentication(req, response) {
 
 // -- Middleware --
 
-const PUBLIC_PATHS = new Set(['/login.html', '/login.js', '/style.css'])
+const PUBLIC_PATHS = new Set(['/login.html', '/login.js', '/util.js', '/style.css'])
 
 async function requireAuth(req, res, next) {
   try {
@@ -228,6 +229,7 @@ module.exports = {
   ORIGIN,
   hasAnyCredential,
   getMeContactId,
+  setMeContactId,
   getRegistrationOptions,
   verifyRegistration,
   getAuthenticationOptions,

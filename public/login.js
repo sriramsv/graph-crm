@@ -1,14 +1,5 @@
 const { startRegistration, startAuthentication } = SimpleWebAuthnBrowser
-
-async function api(path, options) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(body.error || `request failed: ${res.status}`)
-  return body
-}
+const api = apiRequest
 
 function showError(message) {
   document.getElementById('login-error').textContent = message
