@@ -813,8 +813,13 @@ init()
 
 // -- Global search --
 
-function focusNodeInGraph(id) {
+async function focusNodeInGraph(id) {
   if (!state.network) return
+  // If we're viewing a local graph, its dataset may not include this node at all —
+  // selectNodes/focus silently no-op in that case, so fall back to the full graph.
+  if (!state.nodesDataSet.get(id)) {
+    await loadGraph()
+  }
   state.network.selectNodes([id])
   state.network.focus(id, { scale: 1.2, animation: { duration: 400, easingFunction: 'easeInOutQuad' } })
   showContactDetail(id)
@@ -861,7 +866,7 @@ function setupGlobalSearch() {
     resultsEl.classList.add('hidden')
     input.value = ''
     switchTab('graph')
-    focusNodeInGraph(id)
+    focusNodeInGraph(id).catch((err) => console.error('focusNodeInGraph failed:', err))
   }
 
   input.addEventListener('input', () => {
