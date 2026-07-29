@@ -162,8 +162,41 @@ async function loadGraph() {
   renderGraph(data.nodes, data.edges)
 }
 
+// Ensures "me" and the connecting chain are part of every local graph, even if
+// they'd otherwise fall outside the subgraph's depth radius — so every local
+// graph shows how that person connects back to you.
+function mergePathIntoGraph(data, path) {
+  const nodeIds = new Set(data.nodes.map((n) => n.id))
+  const me = state.contacts.find((c) => c.id === state.meContactId)
+  if (me && !nodeIds.has(me.id)) {
+    data.nodes.push({ id: me.id, label: me.label, company: me.company })
+    nodeIds.add(me.id)
+  }
+
+  let prevId = state.meContactId
+  for (const step of path) {
+    const stepContact = step.contact
+    if (!nodeIds.has(stepContact.id)) {
+      data.nodes.push({ id: stepContact.id, label: stepContact.name, company: stepContact.company })
+      nodeIds.add(stepContact.id)
+    }
+    const from = step.fromThem ? stepContact.id : prevId
+    const to = step.fromThem ? prevId : stepContact.id
+    if (!data.edges.some((e) => e.from === from && e.to === to && e.label === step.type)) {
+      data.edges.push({ id: `path:${from}:${to}:${step.type}`, from, to, label: step.type, notes: null })
+    }
+    prevId = stepContact.id
+  }
+}
+
 async function loadLocalGraph(rootId, depth) {
   const data = await api(`/api/contacts/${rootId}/subgraph?depth=${depth || 1}`)
+
+  if (state.meContactId != null && rootId !== state.meContactId) {
+    const pathResult = await api(`/api/contacts/${rootId}/path-to-me`)
+    if (pathResult.path) mergePathIntoGraph(data, pathResult.path)
+  }
+
   state.localGraphRootId = rootId
   const root = state.contacts.find((c) => c.id === rootId)
   const banner = document.getElementById('local-graph-banner')
@@ -243,6 +276,21 @@ async function showContactDetail(id) {
           .join('') || '<li class="empty">No relationships yet.</li>'}
         ${hiddenCount > 0 ? `<li class="empty">+${hiddenCount} more (friends, cousins, colleagues, etc.) — use "View local graph" for the full picture.</li>` : ''}
       </ul>
+      ${!isMeView && state.meContactId != null ? `
+        <div class="quick-add-me-row">
+          <select id="quick-add-me-type">
+            <option value="friend">friend</option>
+            <option value="family">family</option>
+            <option value="spouse">spouse</option>
+            <option value="parent_of">parent_of</option>
+            <option value="child_of">child_of</option>
+            <option value="sibling">sibling</option>
+            <option value="colleague">colleague</option>
+            <option value="knows">knows</option>
+          </select>
+          <button type="button" class="primary small" id="quick-add-me-btn">Add relationship to me</button>
+        </div>
+      ` : ''}
       <button type="button" class="primary small" id="add-relationship-btn">Add relationship</button>
     </div>
 
@@ -292,6 +340,23 @@ async function showContactDetail(id) {
   document.getElementById('add-relationship-btn').addEventListener('click', () => {
     openRelationshipModal(id)
   })
+
+  const quickAddMeBtn = document.getElementById('quick-add-me-btn')
+  if (quickAddMeBtn) {
+    quickAddMeBtn.addEventListener('click', async () => {
+      const type = document.getElementById('quick-add-me-type').value
+      try {
+        await api('/api/relationships', {
+          method: 'POST',
+          body: JSON.stringify({ source_id: id, target_id: state.meContactId, type }),
+        })
+        await refreshAll()
+        await showContactDetail(id)
+      } catch (err) {
+        alert(err.message)
+      }
+    })
+  }
 
   document.getElementById('view-local-graph-btn').addEventListener('click', () => {
     loadLocalGraph(id, 1)

@@ -438,6 +438,15 @@ dialog::backdrop { background: rgba(32,33,36,0.6); }
 .add-relationship-row .combobox { flex: 1; }
 .add-relationship-row select { flex: 0 0 auto; }
 
+.quick-add-me-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  align-items: center;
+}
+.quick-add-me-row select { flex: 0 0 auto; }
+.quick-add-me-row button { flex: 1; }
+
 .you-badge {
   display: inline-block;
   background: var(--primary);
