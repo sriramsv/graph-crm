@@ -4,6 +4,7 @@ const FileStore = require('session-file-store')(session)
 const path = require('path')
 const prisma = require('./prisma/client')
 const auth = require('./auth')
+const family = require('./family')
 const { parseVCards } = require('./vcard')
 const { parseCSV } = require('./csv')
 
@@ -210,8 +211,6 @@ app.post('/api/contacts/merge', async (req, res) => {
     }
 
     await Promise.all([
-      prisma.relationship.updateMany({ where: { sourceId: dupId }, data: { sourceId: primary_id } }),
-      prisma.relationship.updateMany({ where: { targetId: dupId }, data: { targetId: primary_id } }),
       prisma.interaction.updateMany({ where: { contactId: dupId }, data: { contactId: primary_id } }),
       prisma.credential.updateMany({ where: { contactId: dupId }, data: { contactId: primary_id } }),
     ])
@@ -233,21 +232,6 @@ app.post('/api/contacts/merge', async (req, res) => {
     }
 
     await prisma.contact.delete({ where: { id: dupId } })
-  }
-
-  // Clean up self-loops and exact-duplicate edges created by the reassignment above.
-  await prisma.relationship.deleteMany({ where: { sourceId: primary_id, targetId: primary_id } })
-  const remaining = await prisma.relationship.findMany({
-    where: { OR: [{ sourceId: primary_id }, { targetId: primary_id }] },
-  })
-  const seen = new Set()
-  for (const r of remaining) {
-    const key = `${r.sourceId}:${r.targetId}:${r.type}`
-    if (seen.has(key)) {
-      await prisma.relationship.delete({ where: { id: r.id } })
-    } else {
-      seen.add(key)
-    }
   }
 
   res.json(toContactJson(await prisma.contact.findUnique({ where: { id: primary_id } })))
@@ -354,186 +338,12 @@ app.post('/api/contacts/import', async (req, res) => {
   res.json({ imported, skipped, total: parsed.length, errors })
 })
 
-// -- Relationships --
+// -- Relationships (live model: family.js / FamilyUnit — see CLAUDE.md) --
 
 app.get('/api/relationships', async (req, res) => {
-  const rels = await prisma.relationship.findMany()
+  const rels = await family.getAllRelationships()
   res.json(rels.map(toRelationshipJson))
 })
-
-const INVERSE_RELATIONSHIP_TYPES = {
-  parent_of: 'child_of',
-  child_of: 'parent_of',
-  grandparent_of: 'grandchild_of',
-  grandchild_of: 'grandparent_of',
-}
-const FAMILY_CHAIN_TYPES = new Set(['parent_of', 'child_of', 'sibling', 'spouse'])
-
-async function runFamilyInference() {
-  await inferSpouseChildRelationships()
-  await inferGrandparentRelationships()
-  await inferCousinRelationships()
-}
-
-// Canonical key for an unordered pair — only valid for symmetric relationship
-// types (spouse, sibling, cousin). Directional types (parent_of, grandparent_of)
-// must keep source:target order and cannot use this.
-function pairKey(a, b) {
-  return a < b ? `${a}:${b}` : `${b}:${a}`
-}
-
-async function runFamilyInference() {
-  const [spouseRels, parentRels, siblingRels, grandparentRels, cousinRels] = await Promise.all([
-    prisma.relationship.findMany({ where: { type: 'spouse' } }),
-    prisma.relationship.findMany({ where: { type: 'parent_of' } }),
-    prisma.relationship.findMany({ where: { type: 'sibling' } }),
-    prisma.relationship.findMany({ where: { type: 'grandparent_of' } }),
-    prisma.relationship.findMany({ where: { type: 'cousin' } }),
-  ])
-
-  const newParentRels = await inferSpouseChildRelationships(spouseRels, parentRels)
-  const allParentRels = parentRels.concat(newParentRels)
-
-  await inferGrandparentRelationships(allParentRels, grandparentRels)
-  await inferCousinRelationships(siblingRels, allParentRels, cousinRels)
-}
-
-// If A is spouse of B and A is parent_of a child, assume B is parent_of that child too.
-// Returns the newly created parent_of rows so callers can fold them into further inference.
-async function inferSpouseChildRelationships(spouseRels, parentRels) {
-  const spousePairs = new Set(spouseRels.map((r) => pairKey(r.sourceId, r.targetId)))
-
-  const parentToChildren = new Map()
-  for (const r of parentRels) {
-    if (!parentToChildren.has(r.sourceId)) parentToChildren.set(r.sourceId, new Set())
-    parentToChildren.get(r.sourceId).add(r.targetId)
-  }
-
-  const toCreate = []
-  for (const key of spousePairs) {
-    const [p1, p2] = key.split(':').map(Number)
-    const p1Children = parentToChildren.get(p1) || new Set()
-    const p2Children = parentToChildren.get(p2) || new Set()
-
-    for (const child of p1Children) {
-      if (child === p2 || p2Children.has(child)) continue
-      toCreate.push({ sourceId: p2, targetId: child, type: 'parent_of' })
-      toCreate.push({ sourceId: child, targetId: p2, type: 'child_of' })
-    }
-    for (const child of p2Children) {
-      if (child === p1 || p1Children.has(child)) continue
-      toCreate.push({ sourceId: p1, targetId: child, type: 'parent_of' })
-      toCreate.push({ sourceId: child, targetId: p1, type: 'child_of' })
-    }
-  }
-
-  if (toCreate.length > 0) await prisma.relationship.createMany({ data: toCreate })
-  return toCreate.filter((r) => r.type === 'parent_of')
-}
-
-async function createInverseIfApplicable(sourceId, targetId, type) {
-  const inverseType = INVERSE_RELATIONSHIP_TYPES[type]
-  if (!inverseType) return
-
-  const existing = await prisma.relationship.findFirst({
-    where: { sourceId: targetId, targetId: sourceId, type: inverseType },
-  })
-  if (existing) return
-
-  await prisma.relationship.create({
-    data: { sourceId: targetId, targetId: sourceId, type: inverseType },
-  })
-}
-
-// Walks every two-hop parent_of chain (grandparent -> parent -> grandchild) and
-// creates the corresponding grandparent_of/grandchild_of edges where missing.
-async function inferGrandparentRelationships(parentRels, existingGrandparentRels) {
-  const childToParents = new Map()
-  for (const r of parentRels) {
-    if (!childToParents.has(r.targetId)) childToParents.set(r.targetId, [])
-    childToParents.get(r.targetId).push(r.sourceId)
-  }
-
-  const existingSet = new Set(existingGrandparentRels.map((r) => `${r.sourceId}:${r.targetId}`))
-  const toCreate = []
-
-  for (const r of parentRels) {
-    const parentId = r.sourceId
-    const childId = r.targetId
-    const grandparentIds = childToParents.get(parentId) || []
-    for (const grandparentId of grandparentIds) {
-      if (grandparentId === childId) continue
-      const key = `${grandparentId}:${childId}`
-      if (existingSet.has(key)) continue
-      toCreate.push({ sourceId: grandparentId, targetId: childId, type: 'grandparent_of' })
-      toCreate.push({ sourceId: childId, targetId: grandparentId, type: 'grandchild_of' })
-      existingSet.add(key)
-    }
-  }
-
-  if (toCreate.length > 0) await prisma.relationship.createMany({ data: toCreate })
-}
-
-// Children of siblings are cousins: for every sibling pair, cross their children.
-async function inferCousinRelationships(siblingRels, parentRels, existingCousinRels) {
-  const siblingPairs = new Set(siblingRels.map((r) => pairKey(r.sourceId, r.targetId)))
-
-  const parentToChildren = new Map()
-  for (const r of parentRels) {
-    if (!parentToChildren.has(r.sourceId)) parentToChildren.set(r.sourceId, [])
-    parentToChildren.get(r.sourceId).push(r.targetId)
-  }
-
-  const existingSet = new Set(existingCousinRels.map((r) => pairKey(r.sourceId, r.targetId)))
-  const toCreate = []
-
-  for (const key of siblingPairs) {
-    const [p1, p2] = key.split(':').map(Number)
-    const children1 = parentToChildren.get(p1) || []
-    const children2 = parentToChildren.get(p2) || []
-    for (const c1 of children1) {
-      for (const c2 of children2) {
-        if (c1 === c2) continue
-        const k = pairKey(c1, c2)
-        if (existingSet.has(k)) continue
-        toCreate.push({ sourceId: c1, targetId: c2, type: 'cousin' })
-        existingSet.add(k)
-      }
-    }
-  }
-
-  // Siblings of a cousin are also cousins (e.g. adding a new sibling to someone who's
-  // already your cousin should make the new sibling your cousin too). Expand to a fixed point.
-  const siblingsOf = new Map()
-  for (const key of siblingPairs) {
-    const [a, b] = key.split(':').map(Number)
-    if (!siblingsOf.has(a)) siblingsOf.set(a, new Set())
-    if (!siblingsOf.has(b)) siblingsOf.set(b, new Set())
-    siblingsOf.get(a).add(b)
-    siblingsOf.get(b).add(a)
-  }
-
-  let frontier = Array.from(existingSet)
-  while (frontier.length > 0) {
-    const nextFrontier = []
-    for (const key of frontier) {
-      const [a, b] = key.split(':').map(Number)
-      for (const [x, y] of [[a, b], [b, a]]) {
-        for (const sibOfX of siblingsOf.get(x) || []) {
-          if (sibOfX === y) continue
-          const k = pairKey(sibOfX, y)
-          if (existingSet.has(k)) continue
-          toCreate.push({ sourceId: sibOfX, targetId: y, type: 'cousin' })
-          existingSet.add(k)
-          nextFrontier.push(k)
-        }
-      }
-    }
-    frontier = nextFrontier
-  }
-
-  if (toCreate.length > 0) await prisma.relationship.createMany({ data: toCreate })
-}
 
 app.post('/api/relationships', async (req, res) => {
   const { source_id, target_id, type, notes } = req.body
@@ -552,13 +362,12 @@ app.post('/api/relationships', async (req, res) => {
     return res.status(400).json({ error: 'source_id or target_id does not exist' })
   }
 
-  const resolvedType = type || 'knows'
-  const rel = await prisma.relationship.create({
-    data: { sourceId: source_id, targetId: target_id, type: resolvedType, notes: notes || null },
-  })
-  await createInverseIfApplicable(source_id, target_id, resolvedType)
-  if (FAMILY_CHAIN_TYPES.has(resolvedType)) await runFamilyInference()
-  res.status(201).json(toRelationshipJson(rel))
+  try {
+    const rel = await family.createRelationship(source_id, target_id, type || 'knows', notes)
+    res.status(201).json(toRelationshipJson(rel))
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message })
+  }
 })
 
 app.post('/api/relationships/import', async (req, res) => {
@@ -575,11 +384,6 @@ app.post('/api/relationships/import', async (req, res) => {
   }
 
   const allContacts = await prisma.contact.findMany({ select: { id: true, name: true, email: true } })
-  const existingRelationships = await prisma.relationship.findMany({
-    select: { sourceId: true, targetId: true, type: true },
-  })
-  const existingSet = new Set(existingRelationships.map((r) => `${r.sourceId}:${r.targetId}:${r.type}`))
-
   const byEmail = new Map()
   const byName = new Map()
   for (const c of allContacts) {
@@ -603,59 +407,52 @@ app.post('/api/relationships/import', async (req, res) => {
     return { id: matches[0].id }
   }
 
+  const existingRels = await family.getAllRelationships()
+  const dedupeKey = (a, b, type) => `${Math.min(a, b)}:${Math.max(a, b)}:${type}`
+  const existingSet = new Set(existingRels.map((r) => dedupeKey(r.sourceId, r.targetId, r.type)))
+
   let imported = 0
   let skipped = 0
   const errors = []
-  const toCreate = []
 
-  rows.forEach((r, idx) => {
+  for (const [idx, r] of rows.entries()) {
     const rowNum = idx + 2 // account for header row, 1-indexed
     const sourceValue = r.source || r.from
     const targetValue = r.target || r.to
     if (!sourceValue || !targetValue) {
       errors.push(`row ${rowNum}: source and target are required`)
-      return
+      continue
     }
 
     const source = resolveContact(sourceValue)
     if (source.error) {
       errors.push(`row ${rowNum}: ${source.error}`)
-      return
+      continue
     }
     const target = resolveContact(targetValue)
     if (target.error) {
       errors.push(`row ${rowNum}: ${target.error}`)
-      return
+      continue
     }
     if (source.id === target.id) {
       errors.push(`row ${rowNum}: source and target are the same contact`)
-      return
+      continue
     }
 
     const type = r.type || 'knows'
-    const key = `${source.id}:${target.id}:${type}`
+    const key = dedupeKey(source.id, target.id, type)
     if (existingSet.has(key)) {
       skipped++
-      return
+      continue
     }
 
-    toCreate.push({ sourceId: source.id, targetId: target.id, type, notes: r.notes || null })
-    existingSet.add(key)
-    imported++
-
-    const inverseType = INVERSE_RELATIONSHIP_TYPES[type]
-    if (inverseType) {
-      const inverseKey = `${target.id}:${source.id}:${inverseType}`
-      if (!existingSet.has(inverseKey)) {
-        toCreate.push({ sourceId: target.id, targetId: source.id, type: inverseType, notes: null })
-        existingSet.add(inverseKey)
-      }
+    try {
+      await family.createRelationship(source.id, target.id, type, r.notes || null)
+      existingSet.add(key)
+      imported++
+    } catch (err) {
+      errors.push(`row ${rowNum}: ${err.message}`)
     }
-  })
-
-  if (toCreate.length > 0) {
-    await prisma.relationship.createMany({ data: toCreate })
-    if (toCreate.some((r) => FAMILY_CHAIN_TYPES.has(r.type))) await runFamilyInference()
   }
 
   res.json({ imported, skipped, total: rows.length, errors })
@@ -663,9 +460,9 @@ app.post('/api/relationships/import', async (req, res) => {
 
 app.delete('/api/relationships/:id', async (req, res) => {
   try {
-    await prisma.relationship.delete({ where: { id: Number(req.params.id) } })
+    await family.deleteRelationship(req.params.id)
   } catch (err) {
-    return res.status(404).json({ error: 'relationship not found' })
+    return res.status(err.status || 404).json({ error: err.message || 'relationship not found' })
   }
   res.status(204).end()
 })
@@ -718,7 +515,8 @@ app.delete('/api/interactions/:id', async (req, res) => {
 
 app.get('/api/directory', async (req, res) => {
   const contacts = await prisma.contact.findMany({ orderBy: { name: 'asc' } })
-  const spouseRels = await prisma.relationship.findMany({ where: { type: 'spouse' } })
+  const allRelationships = await family.getAllRelationships()
+  const spouseRels = allRelationships.filter((r) => r.type === 'spouse')
   const contactsById = new Map(contacts.map((c) => [c.id, c]))
 
   const spouseByContactId = new Map()
@@ -768,7 +566,7 @@ function toEdge(r) {
 
 app.get('/api/graph', async (req, res) => {
   const contacts = await prisma.contact.findMany()
-  const relationships = await prisma.relationship.findMany()
+  const relationships = await family.getAllRelationships()
   res.json({
     nodes: contacts.map(toNode),
     edges: relationships.map(toEdge),
@@ -781,7 +579,7 @@ app.get('/api/contacts/:id/subgraph', async (req, res) => {
   if (!root) return res.status(404).json({ error: 'contact not found' })
 
   const depth = Math.min(Math.max(Number(req.query.depth) || 1, 1), 4)
-  const allRelationships = await prisma.relationship.findMany()
+  const allRelationships = await family.getAllRelationships()
 
   const visited = new Set([rootId])
   let frontier = new Set([rootId])
@@ -819,7 +617,7 @@ app.get('/api/contacts/:id/path-to-me', async (req, res) => {
 
   if (targetId === meId) return res.json({ path: [] })
 
-  const allRelationships = await prisma.relationship.findMany()
+  const allRelationships = await family.getAllRelationships()
   const adjacency = new Map() // contactId -> [{ otherId, type, fromThem }]
   for (const r of allRelationships) {
     if (!adjacency.has(r.sourceId)) adjacency.set(r.sourceId, [])

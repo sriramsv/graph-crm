@@ -258,8 +258,8 @@ tool(
   'delete_relationship',
   {
     title: 'Delete relationship',
-    description: 'Delete a relationship by id',
-    inputSchema: { id: z.number() },
+    description: 'Delete a relationship by id (a string, e.g. "12:friend:3:4" — pass the id exactly as returned by list_relationships/create_relationship)',
+    inputSchema: { id: z.string() },
   },
   async ({ id }) => {
     await api(`/api/relationships/${id}`, { method: 'DELETE' })
