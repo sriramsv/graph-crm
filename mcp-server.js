@@ -308,6 +308,96 @@ tool(
   }
 )
 
+// -- Institutions (companies, schools, organizations) --
+
+tool(
+  'list_institutions',
+  {
+    title: 'List institutions',
+    description: 'List all institutions (companies, schools, organizations) with their member count',
+    inputSchema: {},
+  },
+  () => api('/api/institutions')
+)
+
+tool(
+  'get_institution',
+  {
+    title: 'Get institution',
+    description: 'Get an institution by id, including everyone affiliated with it (role, start/end dates)',
+    inputSchema: { id: z.number() },
+  },
+  ({ id }) => api(`/api/institutions/${id}`)
+)
+
+tool(
+  'create_institution',
+  {
+    title: 'Create institution',
+    description: 'Create a new institution (company, school, organization). Prefer add_affiliation with institution_name if you just want to link a contact to one — it finds-or-creates automatically.',
+    inputSchema: { name: z.string().min(1), type: z.string().default('organization') },
+  },
+  (args) => api('/api/institutions', { method: 'POST', body: JSON.stringify(args) })
+)
+
+tool(
+  'delete_institution',
+  {
+    title: 'Delete institution',
+    description: 'Delete an institution and all its affiliations',
+    inputSchema: { id: z.number() },
+  },
+  async ({ id }) => {
+    await api(`/api/institutions/${id}`, { method: 'DELETE' })
+    return { deleted: id }
+  }
+)
+
+tool(
+  'list_affiliations',
+  {
+    title: 'List a contact\'s affiliations',
+    description: 'List every institution a contact is affiliated with (role, start/end dates)',
+    inputSchema: { contact_id: z.number() },
+  },
+  ({ contact_id }) => api(`/api/contacts/${contact_id}/affiliations`)
+)
+
+tool(
+  'add_affiliation',
+  {
+    title: 'Add affiliation',
+    description:
+      'Link a contact to an institution, e.g. "Jane worked at Acme as Engineer 2018-2022". Pass either ' +
+      'institution_id (if you already have it from list_institutions) or institution_name, which finds an ' +
+      'existing institution by exact case-insensitive name match or creates one if none exists.',
+    inputSchema: {
+      contact_id: z.number(),
+      institution_id: z.number().optional(),
+      institution_name: z.string().optional(),
+      institution_type: z.string().optional().describe('used only when creating a new institution, e.g. "company" or "school"'),
+      role: z.string().optional(),
+      start_date: z.string().regex(ISO_DATE_RE, 'must be YYYY-MM-DD').optional(),
+      end_date: z.string().regex(ISO_DATE_RE, 'must be YYYY-MM-DD').optional().describe('omit if still current'),
+    },
+  },
+  ({ contact_id, ...rest }) =>
+    api(`/api/contacts/${contact_id}/affiliations`, { method: 'POST', body: JSON.stringify(rest) })
+)
+
+tool(
+  'delete_affiliation',
+  {
+    title: 'Delete affiliation',
+    description: 'Remove a contact\'s affiliation with an institution by affiliation id',
+    inputSchema: { id: z.number() },
+  },
+  async ({ id }) => {
+    await api(`/api/affiliations/${id}`, { method: 'DELETE' })
+    return { deleted: id }
+  }
+)
+
 // -- Graph --
 
 tool(
