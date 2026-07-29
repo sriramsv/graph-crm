@@ -310,6 +310,29 @@ button.primary.small { padding: 7px 16px; font-size: 13px; }
 }
 .directory-header h2 { margin: 0; }
 
+.list-filters {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+.list-filters select {
+  background: var(--panel-alt);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.graph-type-filter {
+  background: var(--panel-alt);
+  border: 1px solid transparent;
+  color: var(--text);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.graph-type-filter.hidden { display: none; }
+
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }

@@ -8,6 +8,9 @@ const state = {
   localGraphRootId: null,
   allRelationships: [],
   spouseMap: new Map(),
+  allInstitutions: [],
+  allAffiliations: [],
+  fullGraphData: null,
 }
 
 // -- Theme --
@@ -46,6 +49,7 @@ async function api(path, options) {
 function switchTab(view) {
   document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === view))
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `${view}-view`))
+  document.getElementById('graph-type-filter').classList.toggle('hidden', view !== 'graph')
   if (view === 'graph' && state.network) {
     state.network.redraw()
   }
@@ -157,10 +161,47 @@ function renderGraph(dataNodes, dataEdges) {
 async function loadGraph() {
   const data = await api('/api/graph')
   state.contacts = data.nodes
+  state.fullGraphData = data
   state.localGraphRootId = null
   document.getElementById('local-graph-banner').classList.add('hidden')
-  renderGraph(data.nodes, data.edges)
+  applyGraphTypeFilter()
 }
+
+// Filters the currently-loaded full graph down to edges of the selected type
+// (plus "me", for orientation), or shows everything when no type is selected.
+function applyGraphTypeFilter() {
+  if (!state.fullGraphData) return
+  const type = document.getElementById('graph-type-filter').value
+  if (!type) {
+    renderGraph(state.fullGraphData.nodes, state.fullGraphData.edges)
+    return
+  }
+  const filteredEdges = state.fullGraphData.edges.filter((e) => e.label === type)
+  const nodeIds = new Set()
+  filteredEdges.forEach((e) => {
+    nodeIds.add(e.from)
+    nodeIds.add(e.to)
+  })
+  if (state.meContactId != null) nodeIds.add(state.meContactId)
+  const filteredNodes = state.fullGraphData.nodes.filter((n) => nodeIds.has(n.id))
+  renderGraph(filteredNodes, filteredEdges)
+}
+
+function populateGraphTypeFilterOptions() {
+  const select = document.getElementById('graph-type-filter')
+  const current = select.value
+  const types = [...new Set(state.allRelationships.map((r) => r.type))].sort()
+  select.innerHTML =
+    '<option value="">All relationship types</option>' +
+    types.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')
+  if (types.includes(current)) select.value = current
+}
+
+document.getElementById('graph-type-filter').addEventListener('change', () => {
+  state.localGraphRootId = null
+  document.getElementById('local-graph-banner').classList.add('hidden')
+  applyGraphTypeFilter()
+})
 
 // Ensures "me" and the connecting chain are part of every local graph, even if
 // they'd otherwise fall outside the subgraph's depth radius — so every local
@@ -421,8 +462,63 @@ let allContactsFull = []
 async function loadContactsTable() {
   allContactsFull = await api('/api/contacts')
   state.spouseMap = computeSpouseMap()
-  renderContactsTable(allContactsFull)
+  refreshContactsTableView()
 }
+
+function populateListFilterOptions() {
+  const typeSelect = document.getElementById('filter-relationship-type')
+  const currentType = typeSelect.value
+  const types = [...new Set(state.allRelationships.map((r) => r.type))].sort()
+  typeSelect.innerHTML =
+    '<option value="">All relationship types</option>' +
+    types.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')
+  if (types.includes(currentType)) typeSelect.value = currentType
+
+  const instSelect = document.getElementById('filter-institution')
+  const currentInst = instSelect.value
+  instSelect.innerHTML =
+    '<option value="">All institutions</option>' +
+    state.allInstitutions
+      .map((i) => `<option value="${i.id}">${escapeHtml(i.name)} (${i.member_count})</option>`)
+      .join('')
+  if (state.allInstitutions.some((i) => String(i.id) === currentInst)) instSelect.value = currentInst
+}
+
+function getListFilteredContacts() {
+  let contacts = allContactsFull
+
+  const q = document.getElementById('global-search').value.trim().toLowerCase()
+  if (q) contacts = contacts.filter((c) => c.name.toLowerCase().includes(q))
+
+  const relType = document.getElementById('filter-relationship-type').value
+  if (relType) {
+    const idsWithType = new Set()
+    for (const r of state.allRelationships) {
+      if (r.type === relType) {
+        idsWithType.add(r.source_id)
+        idsWithType.add(r.target_id)
+      }
+    }
+    contacts = contacts.filter((c) => idsWithType.has(c.id))
+  }
+
+  const instId = document.getElementById('filter-institution').value
+  if (instId) {
+    const idsAtInst = new Set(
+      state.allAffiliations.filter((a) => a.institution_id === Number(instId)).map((a) => a.contact_id)
+    )
+    contacts = contacts.filter((c) => idsAtInst.has(c.id))
+  }
+
+  return contacts
+}
+
+function refreshContactsTableView() {
+  renderContactsTable(getListFilteredContacts())
+}
+
+document.getElementById('filter-relationship-type').addEventListener('change', refreshContactsTableView)
+document.getElementById('filter-institution').addEventListener('change', refreshContactsTableView)
 
 function renderContactsTable(contacts) {
   const spouseMap = state.spouseMap
@@ -727,8 +823,17 @@ document.getElementById('import-file-input').addEventListener('change', async (e
 // -- Refresh --
 
 async function refreshAll() {
-  state.allRelationships = await api('/api/relationships')
+  const [allRelationships, allInstitutions, allAffiliations] = await Promise.all([
+    api('/api/relationships'),
+    api('/api/institutions'),
+    api('/api/affiliations'),
+  ])
+  state.allRelationships = allRelationships
+  state.allInstitutions = allInstitutions
+  state.allAffiliations = allAffiliations
   await Promise.all([loadGraph(), loadContactsTable()])
+  populateListFilterOptions()
+  populateGraphTypeFilterOptions()
 }
 
 function renderProfileNav() {
@@ -834,7 +939,7 @@ function setupGlobalSearch() {
     const q = input.value.trim().toLowerCase()
     if (!q) {
       resultsEl.classList.add('hidden')
-      renderContactsTable(allContactsFull)
+      if (document.getElementById('list-view').classList.contains('active')) refreshContactsTableView()
       return
     }
 
@@ -857,9 +962,7 @@ function setupGlobalSearch() {
       })
     })
 
-    if (document.getElementById('list-view').classList.contains('active')) {
-      renderContactsTable(allContactsFull.filter((c) => c.name.toLowerCase().includes(q)))
-    }
+    if (document.getElementById('list-view').classList.contains('active')) refreshContactsTableView()
   }
 
   function selectResult(id) {

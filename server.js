@@ -560,6 +560,13 @@ app.get('/api/institutions', async (req, res) => {
   res.json(institutions.map(toInstitutionJson))
 })
 
+// Flat list of every affiliation, for building client-side filters/lookups
+// without an N+1 fetch per institution.
+app.get('/api/affiliations', async (req, res) => {
+  const affiliations = await prisma.institutionAffiliation.findMany()
+  res.json(affiliations.map(toAffiliationJson))
+})
+
 app.post('/api/institutions', async (req, res) => {
   const { name, type } = req.body
   if (!name || typeof name !== 'string' || !name.trim()) {

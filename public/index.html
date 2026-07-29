@@ -43,6 +43,9 @@
           <div id="search-results" class="combobox-options hidden"></div>
         </div>
         <button id="profile-nav-btn" class="profile-nav-btn hidden" type="button"></button>
+        <select id="graph-type-filter" class="graph-type-filter">
+          <option value="">All relationship types</option>
+        </select>
         <div class="tabs">
           <button class="tab-btn active" data-view="graph">Graph</button>
           <button class="tab-btn" data-view="list">Contacts</button>
@@ -73,11 +76,18 @@
             <button id="export-directory-btn" class="primary small">Export CSV</button>
           </div>
           <p class="settings-desc">
-            Fields tracked today: email, phone, company/title, date of birth, address, and
-            spouse (inferred from "spouse" relationships). School, past employers, and
-            anniversaries aren't captured as structured fields yet — add them as notes on a
-            contact, or ask to have dedicated fields added.
+            Fields tracked today: email, phone, company/title, date of birth, address, spouse
+            (inferred from "spouse" relationships), and institutional affiliations (school,
+            employer, organization — with role and dates).
           </p>
+          <div class="list-filters">
+            <select id="filter-relationship-type">
+              <option value="">All relationship types</option>
+            </select>
+            <select id="filter-institution">
+              <option value="">All institutions</option>
+            </select>
+          </div>
           <table id="contacts-table">
             <thead>
               <tr>
