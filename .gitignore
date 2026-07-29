@@ -5,3 +5,5 @@ crm.db-wal
 .sessions/
 .api-key
 .session-secret
+.env
+data/

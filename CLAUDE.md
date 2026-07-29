@@ -18,6 +18,8 @@ node --check <file>     # syntax-check a file (no test suite exists)
 
 There is no test suite, linter, or build step. Restart the server (`npm start`) after editing `server.js`, `auth.js`, `prisma/schema.prisma`, or anything under `public/` that isn't picked up by a browser refresh — there's no hot reload outside `npm run dev`'s watch on server-side files.
 
+**Config:** `DATABASE_URL` (Prisma datasource, see `.env.example` / README "Swapping the database backend") and `DATA_DIR` (base directory for the SQLite file, session store, and generated secrets — defaults to the project root, used to point everything at a mounted volume in Docker) are both read from `.env` locally via Prisma's built-in dotenv loading. `docker build`/`docker run` — see README "Docker".
+
 ## Architecture
 
 **Three processes/entry points, one SQLite DB (`crm.db`):**

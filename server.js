@@ -10,6 +10,7 @@ const { parseCSV } = require('./csv')
 
 const app = express()
 const PORT = process.env.PORT || 3000
+const DATA_DIR = process.env.DATA_DIR || __dirname
 
 app.use(express.json({ limit: '50mb' }))
 app.use((err, req, res, next) => {
@@ -24,7 +25,7 @@ app.use((err, req, res, next) => {
 
 app.use(
   session({
-    store: new FileStore({ path: path.join(__dirname, '.sessions'), logFn: () => {} }),
+    store: new FileStore({ path: path.join(DATA_DIR, '.sessions'), logFn: () => {} }),
     secret: auth.getOrCreateSessionSecret(),
     resave: false,
     saveUninitialized: false,

@@ -13,7 +13,8 @@ const RP_NAME = 'Graph CRM'
 const RP_ID = process.env.RP_ID || 'localhost'
 const ORIGIN = process.env.ORIGIN || `http://${RP_ID}:${process.env.PORT || 3000}`
 
-const SESSION_SECRET_PATH = path.join(__dirname, '.session-secret')
+const DATA_DIR = process.env.DATA_DIR || __dirname
+const SESSION_SECRET_PATH = path.join(DATA_DIR, '.session-secret')
 
 function getOrCreateSessionSecret() {
   if (fs.existsSync(SESSION_SECRET_PATH)) {
