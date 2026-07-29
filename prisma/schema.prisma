@@ -19,11 +19,12 @@ model Contact {
   notes       String?
   createdAt   DateTime @default(now()) @map("created_at")
 
-  relationshipsAsSource Relationship[]     @relation("source")
-  relationshipsAsTarget Relationship[]     @relation("target")
-  interactions          Interaction[]
-  credentials           Credential[]
-  familyUnitMemberships FamilyUnitMember[]
+  relationshipsAsSource   Relationship[]           @relation("source")
+  relationshipsAsTarget   Relationship[]           @relation("target")
+  interactions            Interaction[]
+  credentials             Credential[]
+  familyUnitMemberships   FamilyUnitMember[]
+  institutionAffiliations InstitutionAffiliation[]
 
   @@map("contacts")
 }
@@ -117,4 +118,35 @@ model ApiKey {
   lastUsedAt DateTime? @map("last_used_at")
 
   @@map("api_keys")
+}
+
+// An organization (company/school/etc), distinct from FamilyUnit: institutions
+// aren't people, and "50 alumni of the same school" isn't a relationship
+// between those 50 people — it's a shared affiliation, not a circle of members.
+model Institution {
+  id        Int      @id @default(autoincrement())
+  name      String
+  type      String // "company" | "school" | "organization" (free-form, like relationship types)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  affiliations InstitutionAffiliation[]
+
+  @@map("institutions")
+}
+
+model InstitutionAffiliation {
+  id            Int      @id @default(autoincrement())
+  institutionId Int      @map("institution_id")
+  contactId     Int      @map("contact_id")
+  role          String? // "Software Engineer", "Student", ...
+  startDate     String?  @map("start_date") // YYYY-MM-DD, same convention as Contact.dateOfBirth
+  endDate       String?  @map("end_date") // null = current
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId])
+  @@index([contactId])
+  @@map("institution_affiliations")
 }
