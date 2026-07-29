@@ -214,6 +214,7 @@ app.post('/api/contacts/merge', async (req, res) => {
     await Promise.all([
       prisma.interaction.updateMany({ where: { contactId: dupId }, data: { contactId: primary_id } }),
       prisma.credential.updateMany({ where: { contactId: dupId }, data: { contactId: primary_id } }),
+      prisma.institutionAffiliation.updateMany({ where: { contactId: dupId }, data: { contactId: primary_id } }),
     ])
 
     const dupMemberships = await prisma.familyUnitMember.findMany({ where: { contactId: dupId } })
@@ -508,6 +509,168 @@ app.delete('/api/interactions/:id', async (req, res) => {
     await prisma.interaction.delete({ where: { id: Number(req.params.id) } })
   } catch (err) {
     return res.status(404).json({ error: 'interaction not found' })
+  }
+  res.status(204).end()
+})
+
+// -- Institutions --
+
+function toInstitutionJson(inst) {
+  return {
+    id: inst.id,
+    name: inst.name,
+    type: inst.type,
+    created_at: formatTimestamp(inst.createdAt),
+    ...(inst.affiliations
+      ? { member_count: inst.affiliations.length }
+      : typeof inst._count === 'object'
+        ? { member_count: inst._count.affiliations }
+        : {}),
+  }
+}
+
+function toAffiliationJson(a) {
+  return {
+    id: a.id,
+    institution_id: a.institutionId,
+    contact_id: a.contactId,
+    role: a.role,
+    start_date: a.startDate,
+    end_date: a.endDate,
+    created_at: formatTimestamp(a.createdAt),
+    ...(a.institution ? { institution: toInstitutionJson(a.institution) } : {}),
+    ...(a.contact ? { contact: toContactJson(a.contact) } : {}),
+  }
+}
+
+const ISO_DATE_RE_INST = /^\d{4}-\d{2}-\d{2}$/
+function validateDateField(value, fieldName) {
+  if (value == null || value === '') return null
+  if (!ISO_DATE_RE_INST.test(value) || Number.isNaN(Date.parse(value))) {
+    return `${fieldName} must be a valid date in YYYY-MM-DD format`
+  }
+  return null
+}
+
+app.get('/api/institutions', async (req, res) => {
+  const institutions = await prisma.institution.findMany({
+    orderBy: { name: 'asc' },
+    include: { _count: { select: { affiliations: true } } },
+  })
+  res.json(institutions.map(toInstitutionJson))
+})
+
+app.post('/api/institutions', async (req, res) => {
+  const { name, type } = req.body
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' })
+  }
+  const institution = await prisma.institution.create({
+    data: { name: name.trim(), type: type || 'organization' },
+  })
+  res.status(201).json(toInstitutionJson(institution))
+})
+
+app.get('/api/institutions/:id', async (req, res) => {
+  const institution = await prisma.institution.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { affiliations: { include: { contact: true } } },
+  })
+  if (!institution) return res.status(404).json({ error: 'institution not found' })
+  res.json({
+    ...toInstitutionJson(institution),
+    members: institution.affiliations.map(toAffiliationJson),
+  })
+})
+
+app.put('/api/institutions/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  const existing = await prisma.institution.findUnique({ where: { id } })
+  if (!existing) return res.status(404).json({ error: 'institution not found' })
+
+  const { name, type } = req.body
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required' })
+  }
+  const institution = await prisma.institution.update({
+    where: { id },
+    data: { name: name.trim(), type: type || existing.type },
+  })
+  res.json(toInstitutionJson(institution))
+})
+
+app.delete('/api/institutions/:id', async (req, res) => {
+  try {
+    await prisma.institution.delete({ where: { id: Number(req.params.id) } })
+  } catch (err) {
+    return res.status(404).json({ error: 'institution not found' })
+  }
+  res.status(204).end()
+})
+
+app.get('/api/contacts/:id/affiliations', async (req, res) => {
+  const contactId = Number(req.params.id)
+  const contact = await prisma.contact.findUnique({ where: { id: contactId } })
+  if (!contact) return res.status(404).json({ error: 'contact not found' })
+
+  const affiliations = await prisma.institutionAffiliation.findMany({
+    where: { contactId },
+    include: { institution: true },
+    orderBy: { createdAt: 'desc' },
+  })
+  res.json(affiliations.map(toAffiliationJson))
+})
+
+app.post('/api/contacts/:id/affiliations', async (req, res) => {
+  const contactId = Number(req.params.id)
+  const contact = await prisma.contact.findUnique({ where: { id: contactId } })
+  if (!contact) return res.status(404).json({ error: 'contact not found' })
+
+  const { institution_id, institution_name, institution_type, role, start_date, end_date } = req.body
+  if (!institution_id && !institution_name) {
+    return res.status(400).json({ error: 'institution_id or institution_name is required' })
+  }
+
+  const startError = validateDateField(start_date, 'start_date')
+  if (startError) return res.status(400).json({ error: startError })
+  const endError = validateDateField(end_date, 'end_date')
+  if (endError) return res.status(400).json({ error: endError })
+
+  let institution
+  if (institution_id) {
+    institution = await prisma.institution.findUnique({ where: { id: institution_id } })
+    if (!institution) return res.status(400).json({ error: 'institution_id does not exist' })
+  } else {
+    // Find-or-create by exact (case-insensitive) name, so re-typing the same
+    // institution from the UI doesn't spawn duplicate records.
+    const name = institution_name.trim()
+    const candidates = await prisma.institution.findMany()
+    institution = candidates.find((i) => i.name.toLowerCase() === name.toLowerCase())
+    if (!institution) {
+      institution = await prisma.institution.create({
+        data: { name, type: institution_type || 'organization' },
+      })
+    }
+  }
+
+  const affiliation = await prisma.institutionAffiliation.create({
+    data: {
+      institutionId: institution.id,
+      contactId,
+      role: role || null,
+      startDate: start_date || null,
+      endDate: end_date || null,
+    },
+    include: { institution: true },
+  })
+  res.status(201).json(toAffiliationJson(affiliation))
+})
+
+app.delete('/api/affiliations/:id', async (req, res) => {
+  try {
+    await prisma.institutionAffiliation.delete({ where: { id: Number(req.params.id) } })
+  } catch (err) {
+    return res.status(404).json({ error: 'affiliation not found' })
   }
   res.status(204).end()
 })
