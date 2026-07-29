@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Graph CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <div id="welcome-overlay" class="welcome-overlay hidden">
+    <div class="welcome-card">
+      <h1>Welcome to Graph CRM</h1>
+      <p>Which contact is you? Once set, your connections to everyone else are highlighted as "You" throughout the app, and the graph opens centered on you.</p>
+
+      <div class="combobox" data-field="welcome_me" id="welcome-combobox">
+        <input type="text" class="combobox-input" autocomplete="off" placeholder="Search your name…" />
+        <input type="hidden" />
+        <div class="combobox-options hidden"></div>
+      </div>
+
+      <div class="welcome-divider"><span>or create yourself</span></div>
+
+      <form id="welcome-create-form">
+        <input type="text" name="name" placeholder="Your name" required />
+        <input type="email" name="email" placeholder="Your email (optional)" />
+        <button type="submit" class="primary">Create my profile</button>
+      </form>
+
+      <button type="button" id="welcome-skip-btn" class="welcome-skip-btn">Skip for now</button>
+    </div>
+  </div>
+
+  <div class="app">
+    <header class="topbar">
+      <h1>Graph CRM</h1>
+      <div class="topbar-right">
+        <div class="search-box">
+          <input type="search" id="global-search" placeholder="Search people…" autocomplete="off" />
+          <div id="search-results" class="combobox-options hidden"></div>
+        </div>
+        <button id="profile-nav-btn" class="profile-nav-btn hidden" type="button"></button>
+        <div class="tabs">
+          <button class="tab-btn active" data-view="graph">Graph</button>
+          <button class="tab-btn" data-view="list">Contacts</button>
+          <button class="tab-btn" data-view="settings">Settings</button>
+        </div>
+        <button id="theme-toggle" class="theme-toggle" title="Toggle light/dark theme">&#9789;</button>
+        <button id="logout-btn" class="tab-btn" type="button">Log out</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="graph-view" class="view active">
+        <div id="network"></div>
+        <div id="local-graph-banner" class="local-graph-banner hidden">
+          <span id="local-graph-label"></span>
+          <button id="exit-local-graph" type="button">Show full graph</button>
+        </div>
+        <aside id="detail-panel" class="detail-panel hidden">
+          <button id="close-panel" class="close-btn">&times;</button>
+          <div id="detail-content"></div>
+        </aside>
+      </section>
+
+      <section id="list-view" class="view">
+        <div class="panel panel-wide">
+          <div class="directory-header">
+            <h2>Contacts</h2>
+            <button id="export-directory-btn" class="primary small">Export CSV</button>
+          </div>
+          <p class="settings-desc">
+            Fields tracked today: email, phone, company/title, date of birth, address, and
+            spouse (inferred from "spouse" relationships). School, past employers, and
+            anniversaries aren't captured as structured fields yet — add them as notes on a
+            contact, or ask to have dedicated fields added.
+          </p>
+          <table id="contacts-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Email</th><th>Phone</th><th>Company</th><th>Title</th>
+                <th>DOB</th><th>Address</th><th>Spouse</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="settings-view" class="view">
+        <div class="panel">
+          <h2>Settings</h2>
+
+          <div class="settings-block">
+            <h3>Who are you?</h3>
+            <p class="settings-desc">
+              Pick which contact represents you. Once set, your connections to everyone else
+              are highlighted as "You" throughout the app.
+            </p>
+            <div class="combobox" data-field="me_contact" id="me-combobox">
+              <input type="text" class="combobox-input" autocomplete="off" placeholder="Search your name…" />
+              <input type="hidden" />
+              <div class="combobox-options hidden"></div>
+            </div>
+            <div id="me-current" class="import-result"></div>
+          </div>
+
+          <div class="settings-block">
+            <h3>Import contacts</h3>
+            <p class="settings-desc">
+              Import people from Google Contacts or Apple Contacts. Export your contacts as a
+              vCard (<code>.vcf</code>) file from either service, then upload it here.
+              Contacts are matched by email — duplicates are skipped automatically.
+            </p>
+            <p class="settings-hint">
+              Google Contacts: Export &rarr; vCard (.vcf).
+              Apple Contacts (macOS): select contacts &rarr; File &rarr; Export &rarr; Export vCard.
+            </p>
+            <button id="import-btn" class="primary">Choose .vcf file&hellip;</button>
+            <input type="file" id="import-file-input" accept=".vcf,text/vcard" hidden />
+            <div id="import-result" class="import-result"></div>
+          </div>
+
+          <div class="settings-block">
+            <h3>Bulk import relationships</h3>
+            <p class="settings-desc">
+              Add many relationships (edges) at once between contacts that already exist.
+              Upload a CSV with columns <code>source,target,type,notes</code> — one row per
+              relationship. People are matched by exact email or exact name; a person can
+              appear in as many rows as needed, so many-to-many connections are just multiple rows.
+            </p>
+            <p class="settings-hint">
+              Example:<br />
+              <code>source,target,type<br />Jane Doe,John Smith,colleague<br />Jane Doe,jane@example.com,friend<br />John Smith,jane@example.com,knows</code>
+            </p>
+            <button id="import-relationships-btn" class="primary">Choose .csv file&hellip;</button>
+            <input type="file" id="import-relationships-file-input" accept=".csv,text/csv" hidden />
+            <div id="import-relationships-result" class="import-result"></div>
+          </div>
+
+          <div class="settings-block">
+            <h3>Security</h3>
+            <p class="settings-desc">
+              You sign in with a passkey. Passkey management (adding a second device, removing
+              this one) isn't built yet — for now there's a single passkey tied to your contact.
+              Use the "Log out" button in the top bar to end your session.
+            </p>
+          </div>
+
+          <div class="settings-block">
+            <h3>API keys</h3>
+            <p class="settings-desc">
+              Create named keys for accessing this CRM's HTTP API directly (e.g. with
+              <code>curl</code> or a script) or via the <code>graph-crm</code> MCP server used by
+              Claude — both authenticate by sending <code>Authorization: Bearer &lt;key&gt;</code>.
+              Each key bypasses passkey login. A key's full value is shown <strong>once</strong>,
+              right after you create it — after that only its label and prefix are shown, so keep
+              a copy somewhere safe.
+            </p>
+            <ul id="api-key-list" class="relationship-list"></ul>
+            <div class="add-relationship-row">
+              <input type="text" id="new-api-key-label" placeholder="Key label, e.g. &quot;laptop script&quot;" />
+              <button type="button" id="create-api-key-btn" class="primary small">Create key</button>
+            </div>
+          </div>
+
+          <div class="settings-block danger-zone">
+            <h3>Danger zone</h3>
+            <p class="settings-desc">
+              Permanently delete <strong>every contact, relationship, and note</strong> in this CRM.
+              This cannot be undone.
+            </p>
+            <label class="danger-confirm-label">
+              <span>Type <code>DELETE</code> to confirm</span>
+              <input type="text" id="delete-all-confirm-input" autocomplete="off" placeholder="DELETE" />
+            </label>
+            <button id="delete-all-btn" class="danger-btn" disabled>Delete all contacts</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <button id="add-contact-fab" class="fab" title="Add contact">+</button>
+  </div>
+
+  <!-- Add Contact Modal -->
+  <dialog id="contact-modal">
+    <form id="contact-form" method="dialog">
+      <h2 id="contact-modal-title">New Contact</h2>
+      <input type="hidden" name="id" />
+      <label>Name<input type="text" name="name" required /></label>
+      <label>Company<input type="text" name="company" /></label>
+      <label>Title<input type="text" name="title" /></label>
+      <label>Email<input type="email" name="email" /></label>
+      <label>Phone<input type="tel" name="phone" /></label>
+      <label>Date of birth<input type="date" name="date_of_birth" /></label>
+      <label>Address<input type="text" name="address" /></label>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <div class="modal-actions">
+        <button type="button" id="cancel-contact">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+
+    <div id="contact-relationships-section" class="modal-relationships hidden">
+      <h3>Relationships</h3>
+      <ul id="contact-relationships-list" class="relationship-list"></ul>
+      <div class="add-relationship-row">
+        <div class="combobox" data-field="edit_rel_target" id="edit-rel-combobox">
+          <input type="text" class="combobox-input" autocomplete="off" placeholder="Add a relationship to…" />
+          <input type="hidden" />
+          <div class="combobox-options hidden"></div>
+        </div>
+        <select id="edit-rel-type">
+          <option value="knows">knows</option>
+          <option value="friend">friend</option>
+          <option value="family">family</option>
+          <option value="spouse">spouse</option>
+          <option value="parent_of">parent_of</option>
+          <option value="child_of">child_of</option>
+          <option value="grandparent_of">grandparent_of</option>
+          <option value="grandchild_of">grandchild_of</option>
+          <option value="cousin">cousin</option>
+          <option value="sibling">sibling</option>
+          <option value="colleague">colleague</option>
+          <option value="works_with">works_with</option>
+          <option value="reports_to">reports_to</option>
+          <option value="mentor">mentor</option>
+          <option value="referred">referred</option>
+          <option value="customer_of">customer_of</option>
+          <option value="introduced_by">introduced_by</option>
+        </select>
+        <button type="button" id="edit-rel-add-btn" class="primary small">Add</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Add Relationship Modal -->
+  <dialog id="relationship-modal">
+    <form id="relationship-form" method="dialog">
+      <h2>New Relationship</h2>
+      <label>From
+        <div class="combobox" data-field="source_id">
+          <input type="text" class="combobox-input" autocomplete="off" placeholder="Type a name…" required />
+          <input type="hidden" name="source_id" />
+          <div class="combobox-options hidden"></div>
+        </div>
+      </label>
+      <label>To
+        <div class="combobox" data-field="target_id">
+          <input type="text" class="combobox-input" autocomplete="off" placeholder="Type a name…" required />
+          <input type="hidden" name="target_id" />
+          <div class="combobox-options hidden"></div>
+        </div>
+      </label>
+      <label>Type
+        <select name="type">
+          <option value="knows">knows</option>
+          <option value="friend">friend</option>
+          <option value="family">family</option>
+          <option value="spouse">spouse</option>
+          <option value="parent_of">parent_of</option>
+          <option value="child_of">child_of</option>
+          <option value="grandparent_of">grandparent_of</option>
+          <option value="grandchild_of">grandchild_of</option>
+          <option value="cousin">cousin</option>
+          <option value="sibling">sibling</option>
+          <option value="colleague">colleague</option>
+          <option value="works_with">works_with</option>
+          <option value="reports_to">reports_to</option>
+          <option value="mentor">mentor</option>
+          <option value="referred">referred</option>
+          <option value="customer_of">customer_of</option>
+          <option value="introduced_by">introduced_by</option>
+        </select>
+      </label>
+      <label>Notes<textarea name="notes"></textarea></label>
+      <div class="modal-actions">
+        <button type="button" id="cancel-relationship">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- API Key Reveal Modal (shown once, on creation) -->
+  <dialog id="api-key-reveal-modal">
+    <div class="api-key-reveal">
+      <h2>Copy your API key now</h2>
+      <p class="settings-desc">
+        This is the only time the full key is shown. Store it somewhere safe — you'll need to
+        paste it into whatever tool or script is going to use it.
+      </p>
+      <div class="api-key-value-row">
+        <code id="api-key-reveal-value"></code>
+        <button type="button" id="copy-api-key-btn" class="icon-btn">Copy</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="close-api-key-reveal-btn" class="primary">Done, I've saved it</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>

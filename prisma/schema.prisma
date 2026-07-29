@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../crm.db"
+}
+
+model Contact {
+  id          Int      @id @default(autoincrement())
+  name        String
+  email       String?
+  company     String?
+  title       String?
+  phone       String?
+  dateOfBirth String?  @map("date_of_birth")
+  address     String?
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  relationshipsAsSource Relationship[]     @relation("source")
+  relationshipsAsTarget Relationship[]     @relation("target")
+  interactions          Interaction[]
+  credentials           Credential[]
+  familyUnitMemberships FamilyUnitMember[]
+
+  @@map("contacts")
+}
+
+// Legacy pairwise edges. Superseded by FamilyUnit/FamilyUnitMember but kept as a
+// backup of the pre-migration data until the new model is verified.
+model Relationship {
+  id        Int      @id @default(autoincrement())
+  sourceId  Int      @map("source_id")
+  targetId  Int      @map("target_id")
+  type      String   @default("knows")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  source Contact @relation("source", fields: [sourceId], references: [id], onDelete: Cascade)
+  target Contact @relation("target", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([sourceId])
+  @@index([targetId])
+  @@map("relationships")
+}
+
+// A shared circle: spouses+children for type="family", or a labeled group of
+// equal "member"s for every other relationship type (friend, colleague, etc).
+model FamilyUnit {
+  id        Int      @id @default(autoincrement())
+  type      String
+  label     String?
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  members FamilyUnitMember[]
+
+  @@map("family_units")
+}
+
+model FamilyUnitMember {
+  id           Int    @id @default(autoincrement())
+  familyUnitId Int    @map("family_unit_id")
+  contactId    Int    @map("contact_id")
+  role         String // "spouse" | "child" | "member"
+
+  familyUnit FamilyUnit @relation(fields: [familyUnitId], references: [id], onDelete: Cascade)
+  contact    Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([familyUnitId, contactId])
+  @@map("family_unit_members")
+}
+
+model Interaction {
+  id         Int      @id @default(autoincrement())
+  contactId  Int      @map("contact_id")
+  type       String   @default("note")
+  content    String
+  occurredAt DateTime @default(now()) @map("occurred_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@map("interactions")
+}
+
+model AppSetting {
+  key   String  @id
+  value String?
+
+  @@map("app_settings")
+}
+
+model Credential {
+  id           Int      @id @default(autoincrement())
+  contactId    Int      @map("contact_id")
+  credentialId String   @unique @map("credential_id")
+  publicKey    Bytes    @map("public_key")
+  counter      BigInt
+  transports   String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@map("credentials")
+}
+
+model ApiKey {
+  id         Int       @id @default(autoincrement())
+  label      String
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  @@map("api_keys")
+}
