@@ -37,3 +37,7 @@ There is no test suite, linter, or build step. Restart the server (`npm start`) 
 **Contacts:** `vcard.js` parses vCard (.vcf) imports (Google/Apple Contacts export format); `csv.js` parses the bulk-relationship-import CSV format. Both are dedup-aware (email + normalized phone for contacts; exact source/target/type for relationships).
 
 **Frontend structure:** `public/index.html` is a single page with tab-switched `<section>` views (Graph/Contacts/Settings) rather than separate pages; `public/app.js` renders all of them into the same DOM and manages a `state` object as the client-side cache (`state.contacts`, `state.allRelationships`, `state.meContactId`, etc.) — most render functions read from `state` rather than re-fetching, so keep `state` in sync (via `refreshAll()`) after any mutation instead of fetching fresh data ad hoc.
+
+## Superpowers
+
+Use the obra/superpowers skills (`superpowers@superpowers-marketplace` plugin) by default in this repo: check `superpowers:using-superpowers` before acting and invoke any skill that applies (brainstorming → writing-plans → executing-plans, plus test-driven-development, systematic-debugging, verification-before-completion). Repo-specific rules in this file still take precedence where they conflict.
